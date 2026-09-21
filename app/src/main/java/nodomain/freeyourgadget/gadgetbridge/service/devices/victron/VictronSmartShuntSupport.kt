@@ -40,11 +40,23 @@ class VictronSmartShuntSupport : AbstractBTLESingleDeviceSupport(LOG) {
         device.resetExtraInfos()
 
         builder.setDeviceState(GBDevice.State.INITIALIZING)
+        // Ask the shunt to push notifications indefinitely. Without this write
+        // the device stops notifying once its keep-alive lapses and the metrics
+        // silently drop out until the next reconnect.
+        builder.write(UUID_CHARACTERISTIC_KEEP_ALIVE, 0xFF.toByte(), 0xFF.toByte())
+        builder.notify(UUID_CHARACTERISTIC_KEEP_ALIVE, true)
         builder.notify(UUID_CHARACTERISTIC_CONSUMED, true)
         builder.notify(UUID_CHARACTERISTIC_POWER, true)
         builder.notify(UUID_CHARACTERISTIC_VOLTAGE, true)
         builder.notify(UUID_CHARACTERISTIC_CURRENT, true)
         builder.notify(UUID_CHARACTERISTIC_CHARGE, true)
+        // One-shot reads so values show up immediately instead of waiting for
+        // the first notification.
+        builder.read(UUID_CHARACTERISTIC_CONSUMED)
+        builder.read(UUID_CHARACTERISTIC_POWER)
+        builder.read(UUID_CHARACTERISTIC_VOLTAGE)
+        builder.read(UUID_CHARACTERISTIC_CURRENT)
+        builder.read(UUID_CHARACTERISTIC_CHARGE)
         builder.setDeviceState(GBDevice.State.INITIALIZED)
         return builder
     }
@@ -106,8 +118,8 @@ class VictronSmartShuntSupport : AbstractBTLESingleDeviceSupport(LOG) {
                 // type=sb16, scale=1, unit=W
                 val raw = buf.short.toInt()
                 if (raw == POWER_NOT_AVAILABLE) {
-                    LOG.debug("Power: N/A")
-                    device.setExtraInfo(VictronSmartShuntCoordinator.EXTRA_POWER, "")
+                    // Transient N/A: keep the last good value instead of blanking.
+                    LOG.debug("Power: N/A, keeping last value")
                 } else {
                     LOG.debug("Power: {} W", raw)
                     device.setExtraInfo(VictronSmartShuntCoordinator.EXTRA_POWER, valueFormatter.formatValue(raw, UNIT_WATT))
@@ -133,13 +145,14 @@ class VictronSmartShuntSupport : AbstractBTLESingleDeviceSupport(LOG) {
                 // type=sn16, scale=0.01, unit=V
                 val raw = buf.short.toInt()
                 if (raw == VOLTAGE_NOT_AVAILABLE) {
-                    LOG.debug("Voltage: N/A")
-                    batteryEvent.voltage = -1f
+                    // Transient N/A: keep the last good value instead of blanking.
+                    LOG.debug("Voltage: N/A, keeping last value")
                 } else {
                     val volts = raw * 0.01
                     LOG.debug("Voltage: {} V", volts)
                     batteryEvent.voltage = volts.toFloat()
                     // Persisted to the database by the event
+                    evaluateGBDeviceEvent(batteryEvent)
                 }
                 device.sendDeviceUpdateIntent(context)
                 return true
@@ -149,8 +162,8 @@ class VictronSmartShuntSupport : AbstractBTLESingleDeviceSupport(LOG) {
                 // type=sn32, scale=0.001, unit=A
                 val raw = buf.int
                 if (raw == CURRENT_NOT_AVAILABLE) {
-                    LOG.debug("Current: N/A")
-                    device.setExtraInfo(VictronSmartShuntCoordinator.EXTRA_CURRENT, "")
+                    // Transient N/A: keep the last good value instead of blanking.
+                    LOG.debug("Current: N/A, keeping last value")
                 } else {
                     val current = raw * 0.001f
                     LOG.debug("Current: {} A", current)
@@ -177,13 +190,13 @@ class VictronSmartShuntSupport : AbstractBTLESingleDeviceSupport(LOG) {
                 // type=un16, scale=0.01, unit=%
                 val raw = buf.short.toInt() and 0xFFFF
                 if (raw == CHARGE_NOT_AVAILABLE) {
-                    LOG.debug("Charge: N/A")
-                    batteryEvent.level = GBDevice.BATTERY_UNKNOWN.toInt()
+                    // Transient N/A: keep the last good value instead of blanking.
+                    LOG.debug("Charge: N/A, keeping last value")
                 } else {
                     LOG.debug("Charge: {} %", raw * 0.01)
                     batteryEvent.level = (raw * 0.01).roundToInt()
+                    evaluateGBDeviceEvent(batteryEvent)
                 }
-                evaluateGBDeviceEvent(batteryEvent)
                 return true
             }
         }
