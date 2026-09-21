@@ -1,0 +1,30 @@
+# Woodpecker CI (Codeberg) — build and sign the debug APK for this branch.
+#
+# Required Woodpecker secrets (ci.codeberg.org -> repo -> Settings -> Secrets),
+# same values as the Voltron GitHub secrets:
+#   ANDROID_KEYSTORE_BASE64   - debug keystore, base64-encoded
+#   ANDROID_KEYSTORE_PASSWORD - keystore password
+#   ANDROID_KEY_ALIAS         - key alias
+#   ANDROID_KEY_PASSWORD      - key password
+#
+# Note: Woodpecker escapes "$" as "$$" below.
+
+when:
+  - event: push
+    branch: victron-shunt-keepalive
+
+steps:
+  build-and-sign:
+    image: mingc/android-build-box:latest
+    secrets:
+      - ANDROID_KEYSTORE_BASE64
+      - ANDROID_KEYSTORE_PASSWORD
+      - ANDROID_KEY_ALIAS
+      - ANDROID_KEY_PASSWORD
+    commands:
+      - echo "$$ANDROID_KEYSTORE_BASE64" | base64 -d > /tmp/debug.keystore
+      - ./gradlew assembleDebug --no-daemon
+      - APKSIGNER=$$(find "$$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
+      - $$APKSIGNER sign --ks /tmp/debug.keystore --ks-pass env:ANDROID_KEYSTORE_PASSWORD --ks-key-alias "$$ANDROID_KEY_ALIAS" --key-pass env:ANDROID_KEY_PASSWORD --out /tmp/gadgetbridge-victron-debug.apk app/build/outputs/apk/debug/app-debug.apk
+      - $$APKSIGNER verify --print-certs /tmp/gadgetbridge-victron-debug.apk
+      - shred -u /tmp/debug.keystore || rm -f /tmp/debug.keystore
