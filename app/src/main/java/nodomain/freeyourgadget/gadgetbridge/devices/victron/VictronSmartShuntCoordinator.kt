@@ -7,6 +7,7 @@ import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCardAction
 import nodomain.freeyourgadget.gadgetbridge.devices.DeviceCoordinator
 import nodomain.freeyourgadget.gadgetbridge.devices.deviceCardAction
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice
+import nodomain.freeyourgadget.gadgetbridge.impl.GBDeviceCandidate
 import nodomain.freeyourgadget.gadgetbridge.service.DeviceSupport
 import nodomain.freeyourgadget.gadgetbridge.service.devices.victron.VictronSmartShuntSupport
 import java.util.regex.Pattern
@@ -14,6 +15,21 @@ import java.util.regex.Pattern
 class VictronSmartShuntCoordinator : AbstractBLEDeviceCoordinator() {
     override fun getSupportedDeviceName(): Pattern {
         return Pattern.compile("^SmartShunt [A-Z0-9]+$")
+    }
+
+    override fun supports(candidate: GBDeviceCandidate): Boolean {
+        if (super.supports(candidate)) {
+            return true
+        }
+        // Rename-proof match: Victron advertisements always carry manufacturer
+        // ID 0x02E1 with an unencrypted device-type byte at offset 4
+        // (0x02 = battery monitor / SmartShunt). VictronConnect lets users
+        // rename the device, which changes the advertised BLE name, so the
+        // name pattern above is not sufficient on its own.
+        val msd = candidate.manufacturerSpecificData ?: return false
+        val data = msd.get(VICTRON_COMPANY_ID) ?: return false
+        return data.size > VICTRON_DEVICE_TYPE_OFFSET &&
+            data[VICTRON_DEVICE_TYPE_OFFSET] == VICTRON_TYPE_BATTERY_MONITOR
     }
 
     override fun getManufacturer(): String {
@@ -63,5 +79,11 @@ class VictronSmartShuntCoordinator : AbstractBLEDeviceCoordinator() {
         const val EXTRA_CONSUMED = "consumed"
         const val EXTRA_POWER = "power"
         const val EXTRA_CURRENT = "current"
+
+        // Victron BLE manufacturer data: company ID 0x02E1, unencrypted
+        // device-type byte at offset 4 (see victron-ble advertisement format)
+        private const val VICTRON_COMPANY_ID = 0x02E1
+        private const val VICTRON_DEVICE_TYPE_OFFSET = 4
+        private const val VICTRON_TYPE_BATTERY_MONITOR = 0x02.toByte()
     }
 }
