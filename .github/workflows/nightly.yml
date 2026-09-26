@@ -39,13 +39,17 @@ jobs:
           fi
 
       - name: Build Mainline Nightly APK
+        env:
+          DEBUG_KEYSTORE_PASSWORD: ${{ secrets.DEBUG_KEYSTORE_PASSWORD }}
+          DEBUG_KEY_PASSWORD: ${{ secrets.DEBUG_KEY_PASSWORD }}
+          DEBUG_KEY_ALIAS: ${{ secrets.DEBUG_KEY_ALIAS }}
         run: |
           if [ -f ~/.android/debug.keystore ]; then
             ./gradlew assembleMainlineNightly \
               -Dnightly_store_file="${HOME}/.android/debug.keystore" \
-              -Dnightly_store_password="android" \
-              -Dnightly_key_alias="androiddebugkey" \
-              -Dnightly_key_password="android"
+              -Dnightly_store_password="${DEBUG_KEYSTORE_PASSWORD}" \
+              -Dnightly_key_alias="${DEBUG_KEY_ALIAS}" \
+              -Dnightly_key_password="${DEBUG_KEY_PASSWORD}"
           else
             ./gradlew assembleMainlineNightly
           fi
