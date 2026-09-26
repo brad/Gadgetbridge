@@ -2,6 +2,9 @@ package nodomain.freeyourgadget.gadgetbridge.service.devices.victron
 
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
+import android.content.Context
+import android.content.Intent
+import nodomain.freeyourgadget.gadgetbridge.devices.victron.VictronInstantReadoutData
 import nodomain.freeyourgadget.gadgetbridge.GBApplication
 import nodomain.freeyourgadget.gadgetbridge.activities.workouts.WorkoutValueFormatter
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventBatteryInfo
@@ -205,6 +208,61 @@ class VictronSmartShuntSupport : AbstractBTLESingleDeviceSupport(LOG) {
     }
 
     companion object {
+        fun handleInstantReadout(readout: VictronInstantReadoutData, device: GBDevice, context: Context) {
+            val valueFormatter = WorkoutValueFormatter()
+
+            readout.consumedAh?.let { consumedAh ->
+                device.setExtraInfo(VictronSmartShuntCoordinator.EXTRA_CONSUMED, valueFormatter.formatValue(consumedAh, UNIT_AMPERE_HOUR))
+            }
+
+            readout.power?.let { power ->
+                device.setExtraInfo(VictronSmartShuntCoordinator.EXTRA_POWER, valueFormatter.formatValue(power, UNIT_WATT))
+                try {
+                    GBApplication.acquireDB().use { db ->
+                        val sampleProvider = BatteryPowerSampleProvider(device, db.daoSession)
+                        val sample = BatteryPowerSample().apply {
+                            timestamp = System.currentTimeMillis()
+                            batteryIndex = 0
+                            this.power = power.toFloat()
+                        }
+                        sampleProvider.persistSamples(sample, context)
+                    }
+                } catch (e: Exception) {
+                    LOG.error("Error persisting power sample from Instant Readout", e)
+                }
+            }
+
+            readout.current?.let { current ->
+                device.setExtraInfo(VictronSmartShuntCoordinator.EXTRA_CURRENT, valueFormatter.formatValue(current, UNIT_AMPERE))
+                try {
+                    GBApplication.acquireDB().use { db ->
+                        val sampleProvider = BatteryCurrentSampleProvider(device, db.daoSession)
+                        val sample = BatteryCurrentSample().apply {
+                            timestamp = System.currentTimeMillis()
+                            batteryIndex = 0
+                            this.current = current
+                        }
+                        sampleProvider.persistSamples(sample, context)
+                    }
+                } catch (e: Exception) {
+                    LOG.error("Error persisting current sample from Instant Readout", e)
+                }
+            }
+
+            readout.soc?.let { soc ->
+                if (soc >= 0f) {
+                    device.setBatteryLevel(soc.roundToInt(), 0)
+                }
+            }
+
+            readout.voltage?.let { voltage ->
+                if (voltage >= 0f) {
+                    device.setBatteryVoltage(voltage, 0)
+                }
+            }
+
+            device.sendDeviceUpdateIntent(context)
+        }
         private val LOG = LoggerFactory.getLogger(VictronSmartShuntSupport::class.java)
 
         /// https://communityarchive.victronenergy.com/questions/93919/victron-bluetooth-ble-protocol-publication.html

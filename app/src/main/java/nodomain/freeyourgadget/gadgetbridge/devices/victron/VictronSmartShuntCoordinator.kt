@@ -17,6 +17,12 @@ class VictronSmartShuntCoordinator : AbstractBLEDeviceCoordinator() {
         return Pattern.compile("^SmartShunt [A-Z0-9]+$")
     }
 
+    override fun getSupportedDeviceSpecificSettings(device: GBDevice): IntArray {
+        return intArrayOf(
+            R.xml.devicesettings_pairingkey
+        )
+    }
+
     override fun supports(candidate: GBDeviceCandidate): Boolean {
         if (super.supports(candidate)) {
             return true

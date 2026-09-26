@@ -283,6 +283,18 @@ public class DeviceCommunicationService extends Service implements SharedPrefere
                     return;
                 }
 
+                byte[] victronData = intent.getByteArrayExtra(BLEScanService.EXTRA_VICTRON_MANUFACTURER_DATA);
+                if (victronData != null && target.getType() == nodomain.freeyourgadget.gadgetbridge.model.DeviceType.VICTRON_SMARTSHUNT) {
+                    SharedPreferences prefs = GBApplication.getDeviceSpecificSharedPrefs(target.getAddress());
+                    String authKey = prefs.getString("authkey", null);
+                    nodomain.freeyourgadget.gadgetbridge.devices.victron.VictronInstantReadoutData readout =
+                            nodomain.freeyourgadget.gadgetbridge.devices.victron.VictronInstantReadoutParser.INSTANCE.parse(victronData, authKey);
+                    if (readout != null) {
+                        nodomain.freeyourgadget.gadgetbridge.service.devices.victron.VictronSmartShuntSupport.Companion.handleInstantReadout(
+                                readout, target, DeviceCommunicationService.this);
+                    }
+                }
+
                 if (!target.getDeviceCoordinator().isConnectable()) {
                     int actualRSSI = intent.getIntExtra(BLEScanService.EXTRA_RSSI, 0);
                     Prefs prefs = new Prefs(
