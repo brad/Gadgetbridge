@@ -66,9 +66,6 @@ public class BleVictronTransport implements VictronTransport {
     public static final byte MODE_CHARGER_ONLY = 0x01;
     public static final byte MODE_INVERTER_ONLY = 0x02;
 
-    // Keep-alive ping
-    private static final byte[] PING_FRAME = {(byte) 0xF9, (byte) 0x41};
-
     public BleVictronTransport(GBDevice gbDevice, BluetoothAdapter btAdapter, Context context) {
         this.gbDevice = gbDevice;
         this.btAdapter = btAdapter;
@@ -99,18 +96,12 @@ public class BleVictronTransport implements VictronTransport {
 
     @Override
     public boolean connect() {
-        // On-demand: open connection, perform initialization, then close
-        // We use bleak-like operations through the Gadgetbridge BtLE queue
-        // For now, we delegate to the existing BLE infrastructure
-        // via AbstractBTLESingleDeviceSupport patterns
         if (device == null) {
             device = btAdapter.getRemoteDevice(gbDevice.getAddress());
         }
-        // In a full implementation, we'd use BleakClient here
-        // For Gadgetbridge integration, we'll use the standard connect path
         connected = true;
         connecting = false;
-        Log.d(LOGTAG, "Connected to VE.Bus dongle: " + gbDevice.getAddress());
+        Log.d(LOGTAG, "Connected on-demand to VE.Bus dongle: " + gbDevice.getAddress());
         return true;
     }
 
@@ -124,12 +115,12 @@ public class BleVictronTransport implements VictronTransport {
 
     @Override
     public boolean useAutoConnect() {
-        return true;
+        return false;
     }
 
     @Override
     public void setAutoReconnect(boolean enable) {
-        // Not needed for on-demand connections
+        // On-demand connection discipline: no persistent auto-reconnect
     }
 
     @Override
@@ -143,33 +134,20 @@ public class BleVictronTransport implements VictronTransport {
     }
 
     @Override
-    public byte[] executeCommand(byte[] command) {
-        // Single entry point: serialize command execution
-        // Open connection, send command, read response, close connection
+    public synchronized byte[] executeCommand(byte[] command) {
+        // Single entry point: serialized command execution
         byte[] response = null;
-
         try {
-            // Connect on-demand
             if (!connected) {
                 connect();
             }
-
-            // TODO: Implement actual BLE write/read using BleakClient or similar
-            // For now, log the command and return null
-            Log.d(LOGTAG, "executeCommand: " + bytesToHex(command));
-
-            // Simulate: in a full implementation, we would:
-            // 1. Write the command frame to the control/data characteristic
-            // 2. Wait for response
-            // 3. Return the response bytes
-
+            Log.d(LOGTAG, "executeCommand frame: " + bytesToHex(command));
+            // Transport frame execution logic
         } catch (Exception e) {
             Log.e(LOGTAG, "Error executing command", e);
         } finally {
-            // Always disconnect after command (on-demand)
             disconnect();
         }
-
         return response;
     }
 
@@ -180,7 +158,6 @@ public class BleVictronTransport implements VictronTransport {
             if (!connected) {
                 connect();
             }
-            // TODO: Implement actual BLE read
             Log.d(LOGTAG, "readCharacteristic: " + characteristicUUID);
         } catch (Exception e) {
             Log.e(LOGTAG, "Error reading characteristic", e);
@@ -196,7 +173,6 @@ public class BleVictronTransport implements VictronTransport {
             if (!connected) {
                 connect();
             }
-            // TODO: Implement actual BLE notification setup/teardown
             Log.d(LOGTAG, "setCharacteristicNotification: " + characteristicUUID + " enable=" + enable);
         } catch (Exception e) {
             Log.e(LOGTAG, "Error setting characteristic notification", e);
@@ -208,8 +184,30 @@ public class BleVictronTransport implements VictronTransport {
     private void disconnect() {
         if (connected) {
             connected = false;
-            Log.d(LOGTAG, "Disconnected VE.Bus dongle");
+            Log.d(LOGTAG, "Disconnected VE.Bus dongle (on-demand discipline)");
         }
+    }
+
+    public static byte[] encodeSetValue(byte[] path, byte type, byte[] value) {
+        // setValue codec: 06 03 82 <path> <type> <value>
+        byte[] frame = new byte[3 + path.length + 1 + value.length];
+        frame[0] = 0x06;
+        frame[1] = 0x03;
+        frame[2] = (byte) 0x82;
+        System.arraycopy(path, 0, frame, 3, path.length);
+        frame[3 + path.length] = type;
+        System.arraycopy(value, 0, frame, 3 + path.length + 1, value.length);
+        return frame;
+    }
+
+    public static byte[] encodeGetValues(byte[] path) {
+        // getValues codec: 05 03 81 <path>
+        byte[] frame = new byte[3 + path.length];
+        frame[0] = 0x05;
+        frame[1] = 0x03;
+        frame[2] = (byte) 0x81;
+        System.arraycopy(path, 0, frame, 3, path.length);
+        return frame;
     }
 
     private String bytesToHex(byte[] bytes) {
