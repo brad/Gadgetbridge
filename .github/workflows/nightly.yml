@@ -1,0 +1,63 @@
+name: Nightly Release
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  nightly-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Set up Debug Keystore
+        env:
+          DEBUG_KEYSTORE: ${{ secrets.DEBUG_KEYSTORE || secrets.SIGNING_KEY || secrets.DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p ~/.android
+          if [ -n "$DEBUG_KEYSTORE" ]; then
+            echo "$DEBUG_KEYSTORE" | base64 -d > ~/.android/debug.keystore
+            echo "Consistent debug keystore restored from secret."
+          else
+            echo "No debug keystore secret provided; standard debug keystore will be generated."
+          fi
+
+      - name: Build Mainline Nightly APK
+        run: |
+          if [ -f ~/.android/debug.keystore ]; then
+            ./gradlew assembleMainlineNightly \
+              -Dnightly_store_file="${HOME}/.android/debug.keystore" \
+              -Dnightly_store_password="android" \
+              -Dnightly_key_alias="androiddebugkey" \
+              -Dnightly_key_password="android"
+          else
+            ./gradlew assembleMainlineNightly
+          fi
+
+      - name: Create or Update Nightly Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: Nightly Build
+          body: |
+            Automated nightly release built from develop branch commit ${{ github.sha }}.
+          prerelease: true
+          files: app/build/outputs/apk/mainline/nightly/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
