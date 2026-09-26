@@ -571,6 +571,7 @@ import nodomain.freeyourgadget.gadgetbridge.devices.una.UnaDeviceCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.vesc.VescCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.vibratissimo.VibratissimoCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.victron.VictronSmartShuntCoordinator;
+import nodomain.freeyourgadget.gadgetbridge.devices.victron.VictronVebusCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.waspos.WaspOSCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.wearfit.WearFitCoordinator;
 import nodomain.freeyourgadget.gadgetbridge.devices.withingssteelhr.WithingsSteelHRDeviceCoordinator;
@@ -1039,6 +1040,7 @@ public enum DeviceType {
     BM2_BATTERY_MONITOR(Bm2Coordinator.class),
     BM6_BATTERY_MONITOR(Bm6Coordinator.class),
     VICTRON_SMARTSHUNT(VictronSmartShuntCoordinator.class),
+    VICTRON_VEBUS(VictronVebusCoordinator.class),
     DJI_OSMO_ACTION_4(DjiOsmoAction4Coordinator.class),
     SINILINK(SinilinkCoordinator.class),
     ONETOUCH(OneTouchCoordinator.class),
