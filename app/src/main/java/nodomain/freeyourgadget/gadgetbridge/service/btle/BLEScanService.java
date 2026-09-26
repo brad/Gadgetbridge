@@ -70,6 +70,7 @@ public class BLEScanService extends Service {
     public static final String EXTRA_DEVICE_ADDRESS = "EXTRA_DEVICE_ADDRESS";
     public static final String EXTRA_RSSI = "EXTRA_RSSI";
     public static final String EXTRA_MANUFACTURER_SPECIFIC_DATA = "EXTRA_MANUFACTURER_SPECIFIC_DATA";
+    public static final String EXTRA_VICTRON_MANUFACTURER_DATA = "EXTRA_VICTRON_MANUFACTURER_DATA";
 
     // 5 minutes scan restart interval
     private final int DELAY_SCAN_RESTART = 5 * 60 * 1000;
@@ -110,16 +111,13 @@ public class BLEScanService extends Service {
             intent.putExtra(EXTRA_DEVICE_ADDRESS, device.getAddress());
             intent.putExtra(EXTRA_RSSI, result.getRssi());
 
-            Parcel parcel = Parcel.obtain();
-            try {
-                if (result.getScanRecord() != null) {
-                    parcel.writeSparseArray(result.getScanRecord().getManufacturerSpecificData());
-                    intent.putExtra(EXTRA_MANUFACTURER_SPECIFIC_DATA, parcel.readBundle(getClass().getClassLoader()));
+            if (result.getScanRecord() != null && result.getScanRecord().getManufacturerSpecificData() != null) {
+                byte[] victronData = result.getScanRecord().getManufacturerSpecificData().get(0x02E1);
+                if (victronData != null) {
+                    intent.putExtra(EXTRA_VICTRON_MANUFACTURER_DATA, victronData);
                 }
-                localBroadcastManager.sendBroadcast(intent);
-            } finally {
-                parcel.recycle();
             }
+            localBroadcastManager.sendBroadcast(intent);
 
             // device found, attempt connection
             // stop scanning for device for now

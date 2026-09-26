@@ -8,6 +8,7 @@ pluginManagement {
                 includeGroupByRegex("androidx\\..*")
             }
         }
+        maven("https://maven.aliyun.com/repository/public")
         gradlePluginPortal()
         mavenCentral()
     }
@@ -22,12 +23,13 @@ dependencyResolutionManagement {
                 includeGroupByRegex("androidx\\..*")
             }
         }
-        mavenCentral()
         maven("https://jitpack.io") {
             content {
                 includeGroupByRegex("com\\.github\\..*")
             }
         }
+        maven("https://maven.aliyun.com/repository/public")
+        mavenCentral()
     }
 }
 
