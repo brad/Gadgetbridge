@@ -5626,4 +5626,7 @@
     <string name="cardo_control_volume">Volume</string>
     <string name="cardo_card_voice_prompts">Voice Prompts</string>
     <string name="cardo_control_enable_voice_prompts">Enable Voice Prompts</string>
+    <string name="devicetype_victron_vebus" translatable="false">Victron VE.Bus</string>
+    <string name="mode" translatable="false">Mode</string>
+    <string name="input_current_limit" translatable="false">Current Limit</string>
 </resources>
