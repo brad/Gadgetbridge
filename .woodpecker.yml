@@ -15,7 +15,7 @@ when:
 
 steps:
   build-and-sign:
-    image: codeberg.org/freeyourgadget/android-fdroid-tools:37.0.0-0
+    image: mingc/android-build-box:latest
     secrets:
       - ANDROID_KEYSTORE_BASE64
       - ANDROID_KEYSTORE_PASSWORD
