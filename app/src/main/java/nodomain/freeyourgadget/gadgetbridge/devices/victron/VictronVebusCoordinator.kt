@@ -49,12 +49,12 @@ class VictronVebusCoordinator : AbstractBLEDeviceCoordinator() {
             return true
         }
         // Match by manufacturer data: Victron company ID with device type
-        // 0x03 (inverter/VE.Bus) at offset 4. Do NOT match other Victron
+        // 0x0C (VE.Bus) at offset 4. Do NOT match other Victron
         // device types (e.g. solar chargers) here.
         val msd = candidate.manufacturerSpecificData
         val data = msd.get(VICTRON_COMPANY_ID) ?: return false
         return data.size > VICTRON_DEVICE_TYPE_OFFSET &&
-            data[VICTRON_DEVICE_TYPE_OFFSET] == VICTRON_TYPE_INVERTER
+            data[VICTRON_DEVICE_TYPE_OFFSET] == VICTRON_TYPE_VEBUS
     }
 
     override fun getManufacturer(): String {
@@ -148,6 +148,6 @@ class VictronVebusCoordinator : AbstractBLEDeviceCoordinator() {
         // device-type byte at offset 4 (see victron-ble advertisement format)
         private const val VICTRON_COMPANY_ID = 0x02E1
         private const val VICTRON_DEVICE_TYPE_OFFSET = 4
-        private const val VICTRON_TYPE_INVERTER = 0x03.toByte()
+        private const val VICTRON_TYPE_VEBUS = 0x0C.toByte()
     }
 }
