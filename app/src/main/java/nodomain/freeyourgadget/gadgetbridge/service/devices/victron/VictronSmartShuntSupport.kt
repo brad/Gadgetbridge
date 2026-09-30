@@ -141,6 +141,7 @@ class VictronSmartShuntSupport : AbstractBTLESingleDeviceSupport(LOG) {
     ): Boolean {
         // Check for 19ec65 key response on Smart service
         if (characteristic.uuid == UUID_SMART_DATA || characteristic.uuid == UUID_SMART_SETUP) {
+            LOG.debug("Smart-service notification on {}: {} bytes", characteristic.uuid, value.size)
             keyNotifs.add(value)
             val key = reassembleAdkey(keyNotifs)
             if (key != null) {

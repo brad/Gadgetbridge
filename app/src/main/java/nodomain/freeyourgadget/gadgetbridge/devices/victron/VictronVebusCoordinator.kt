@@ -43,14 +43,20 @@ class VictronVebusCoordinator : AbstractBLEDeviceCoordinator() {
         if (candidate.supportsService(UUID_SERVICE_VICTRON_VEBUS)) {
             return true
         }
+        // Match by name (case-insensitive) for VE.Bus dongles
+        val name = candidate.name?.lowercase() ?: ""
+        if (name.contains("ve.bus") || name.contains("multiplus")) {
+            return true
+        }
         // Rename-proof match: Victron advertisements always carry manufacturer
-        // ID 0x02E1 with an unencrypted device-type byte at offset 4
-        // VictronConnect lets users rename the device, which changes the advertised
-        // BLE name, so the name pattern above is not sufficient on its own.
+        // ID 0x02E1. Match any Victron device here; the device type byte
+        // check is too strict for the Smart Dongle which may not advertise
+        // as type 0x03 (inverter).
         val msd = candidate.manufacturerSpecificData
         val data = msd.get(VICTRON_COMPANY_ID) ?: return false
-        return data.size > VICTRON_DEVICE_TYPE_OFFSET &&
-            data[VICTRON_DEVICE_TYPE_OFFSET] == VICTRON_TYPE_INVERTER
+        // Accept any Victron device with manufacturer data; user selects
+        // the correct device type during pairing if needed
+        return data.size > VICTRON_DEVICE_TYPE_OFFSET
     }
 
     override fun getManufacturer(): String {
