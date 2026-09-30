@@ -807,6 +807,7 @@
     <string name="pref_cache_weather_summary">Weather information will be cached across application restarts.</string>
     <string name="pref_write_logfiles_not_available">File logging initialization failed, writing log files is currently not available. Restart the application to attempt to initialize the log files again.</string>
     <string name="initializing">Initializing</string>
+    <string name="getting_advertisement_key">Getting advertisement key…</string>
     <string name="busy_task_fetch_activity_data">Fetching activity data</string>
     <string name="busy_task_fetch_glucose_data">Fetching glucose data</string>
     <string name="busy_task_fetch_blood_pressure_data">Fetching blood pressure data</string>
