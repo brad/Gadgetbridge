@@ -115,15 +115,21 @@ class VictronVebusSupport : AbstractBTLESingleDeviceSupport(LOG) {
             builder.notify(UUID_SMART_CTRL, true)
             builder.notify(UUID_SMART_DATA, true)
             builder.notify(UUID_SMART_SETUP, true)
-            // Smart-service login: fa80ff + f980 to CTRL
+            // Smart-service login: fa80ff + f980 to CTRL (with delays per victron-ble adkey.py)
             builder.write(UUID_SMART_CTRL, 0xFA.toByte(), 0x80.toByte(), 0xFF.toByte())
+            builder.sleep(300)
             builder.write(UUID_SMART_CTRL, 0xF9.toByte(), 0x80.toByte())
+            builder.sleep(1000)
             // Handshake: 01 and 0300 to DATA
             builder.write(UUID_SMART_DATA, 0x01.toByte())
+            builder.sleep(500)
             builder.write(UUID_SMART_DATA, 0x03.toByte(), 0x00.toByte())
+            builder.sleep(500)
             // Request 19ec65: SETUP_LAST + READ_EC65
             builder.write(UUID_SMART_DATA, *SETUP_LAST)
+            builder.sleep(1000)
             builder.write(UUID_SMART_DATA, *READ_EC65)
+            builder.sleep(3000)
             keyNotifs.clear()
         }
 
