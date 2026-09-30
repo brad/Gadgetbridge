@@ -27,16 +27,20 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import nodomain.freeyourgadget.gadgetbridge.GBApplication
 import nodomain.freeyourgadget.gadgetbridge.R
 import nodomain.freeyourgadget.gadgetbridge.activities.workouts.WorkoutValueFormatter
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventBatteryInfo
 import nodomain.freeyourgadget.gadgetbridge.devices.victron.VictronVebusCoordinator
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice
 import nodomain.freeyourgadget.gadgetbridge.service.btle.AbstractBTLESingleDeviceSupport
+import nodomain.freeyourgadget.gadgetbridge.service.btle.BLEScanService
 import nodomain.freeyourgadget.gadgetbridge.service.btle.BleVictronTransport
 import nodomain.freeyourgadget.gadgetbridge.service.btle.TransactionBuilder
 import nodomain.freeyourgadget.gadgetbridge.service.btle.VictronTransport
 import nodomain.freeyourgadget.gadgetbridge.util.GB
+import nodomain.freeyourgadget.gadgetbridge.util.Prefs
 import org.slf4j.LoggerFactory
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -48,13 +52,41 @@ class VictronVebusSupport : AbstractBTLESingleDeviceSupport(LOG) {
     private var transport: VictronTransport? = null
     private var notificationReceiver: BroadcastReceiver? = null
 
+    // Accumulated notifications for 19ec65 key reassembly (may span fragments)
+    private val keyNotifs = mutableListOf<ByteArray>()
+
+    private val advertisementReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != BLEScanService.EVENT_DEVICE_FOUND) return
+
+            val address = intent.getStringExtra(BLEScanService.EXTRA_DEVICE_ADDRESS) ?: return
+            if (address != device.address) return
+
+            val bundle = intent.getBundleExtra(BLEScanService.EXTRA_MANUFACTURER_SPECIFIC_DATA) ?: return
+            // Bundle keys are stringified company IDs (e.g. "737" for 0x02E1)
+            val data = bundle.getByteArray(VictronInstantReadout.VICTRON_COMPANY_ID.toString()) ?: return
+            onVictronAdvertisement(data)
+        }
+    }
+
     init {
         addSupportedService(UUID_SERVICE_VICTRON_VEBUS)
+        addSupportedService(UUID_SERVICE_SMART)
     }
 
     override fun useAutoConnect(): Boolean {
         // Connection discipline: on-demand GATT connections only
         return false
+    }
+
+    override fun setContext(gbDevice: GBDevice, btAdapter: android.bluetooth.BluetoothAdapter, context: Context) {
+        super.setContext(gbDevice, btAdapter, context)
+        // Register for passive advertisement updates
+        LocalBroadcastManager.getInstance(context).registerReceiver(
+            advertisementReceiver,
+            IntentFilter(BLEScanService.EVENT_DEVICE_FOUND)
+        )
+        LOG.debug("Registered advertisement receiver for {}", gbDevice.address)
     }
 
     override fun initializeDevice(builder: TransactionBuilder): TransactionBuilder {
@@ -75,6 +107,25 @@ class VictronVebusSupport : AbstractBTLESingleDeviceSupport(LOG) {
         builder.read(UUID_CHARACTERISTIC_CTRL)
         builder.read(UUID_CHARACTERISTIC_DATA)
         builder.read(UUID_CHARACTERISTIC_SETUP)
+
+        // If we don't have the advertisement key yet, retrieve it via 19ec65.
+        // This enables passive Instant Readout telemetry from advertisements.
+        if (getAdvertisementKey() == null) {
+            LOG.info("No advertisement key stored, attempting GATT retrieval via 19ec65")
+            builder.notify(UUID_SMART_CTRL, true)
+            builder.notify(UUID_SMART_DATA, true)
+            builder.notify(UUID_SMART_SETUP, true)
+            // Smart-service login: fa80ff + f980 to CTRL
+            builder.write(UUID_SMART_CTRL, 0xFA.toByte(), 0x80.toByte(), 0xFF.toByte())
+            builder.write(UUID_SMART_CTRL, 0xF9.toByte(), 0x80.toByte())
+            // Handshake: 01 and 0300 to DATA
+            builder.write(UUID_SMART_DATA, 0x01.toByte())
+            builder.write(UUID_SMART_DATA, 0x03.toByte(), 0x00.toByte())
+            // Request 19ec65: SETUP_LAST + READ_EC65
+            builder.write(UUID_SMART_DATA, *SETUP_LAST)
+            builder.write(UUID_SMART_DATA, *READ_EC65)
+            keyNotifs.clear()
+        }
 
         builder.setDeviceState(GBDevice.State.INITIALIZED)
         registerNotificationReceiver()
@@ -125,11 +176,107 @@ class VictronVebusSupport : AbstractBTLESingleDeviceSupport(LOG) {
         setMode(nextMode)
     }
 
+    /**
+     * Process a Victron Instant Readout advertisement.
+     * Decrypts using the stored advertisement key and updates device telemetry.
+     */
+    private fun onVictronAdvertisement(manufacturerData: ByteArray) {
+        val keyHex = getAdvertisementKey()
+        if (keyHex == null) {
+            LOG.debug("No advertisement key, skipping passive decrypt")
+            return
+        }
+
+        val decrypted = VictronInstantReadout.decrypt(manufacturerData, keyHex) ?: return
+        val readout = VictronInstantReadout.parseVebus(decrypted) ?: return
+
+        // Update battery info
+        readout.batteryVoltage?.let {
+            batteryEvent.voltage = it.toFloat()
+        }
+        readout.soc?.let {
+            batteryEvent.level = it.toInt()
+        }
+
+        // Update extra infos for UI
+        readout.deviceState?.let { state ->
+            val modeStr = when (state) {
+                0x01 -> "charger-only"
+                0x02 -> "inverter-only"
+                0x03 -> "on"
+                0x04 -> "off"
+                0xF0 -> "off"
+                0xF1 -> "low power"
+                0xF2 -> "fault"
+                0xF3 -> "bulk"
+                0xF4 -> "absorption"
+                0xF5 -> "float"
+                0xF6 -> "storage"
+                0xF7 -> "equalize"
+                0xF8 -> "passthru"
+                0xF9 -> "inverting"
+                0xFA -> "power assist"
+                0xFB -> "power supply"
+                else -> "unknown ($state)"
+            }
+            device.setExtraInfo(VictronVebusCoordinator.EXTRA_MODE, modeStr)
+        }
+
+        readout.batteryVoltage?.let {
+            device.setExtraInfo("battery_voltage", String.format("%.2f V", it))
+        }
+        readout.batteryCurrent?.let {
+            device.setExtraInfo("battery_current", String.format("%.1f A", it))
+        }
+        readout.acOutPower?.let {
+            device.setExtraInfo("ac_out_power", String.format("%.0f W", it))
+        }
+        readout.acInPower?.let {
+            device.setExtraInfo("ac_in_power", String.format("%.0f W", it))
+        }
+        readout.soc?.let {
+            device.setExtraInfo("soc", String.format("%.0f%%", it))
+        }
+
+        device.sendDeviceUpdateIntent(context)
+        LOG.debug("Updated VE.Bus from advertisement: V={} SOC={}%", readout.batteryVoltage, readout.soc)
+    }
+
+    /**
+     * Get the stored advertisement key (hex string), or null if not set.
+     */
+    private fun getAdvertisementKey(): String? {
+        val prefs = Prefs(GBApplication.getDeviceSpecificSharedPrefs(device.address))
+        val key = prefs.getPreferences().getString(PREF_ADVERTISEMENT_KEY, null)
+        return if (key.isNullOrEmpty()) null else key
+    }
+
+    /**
+     * Store the advertisement key (bytes) in device-specific prefs as hex.
+     */
+    private fun setAdvertisementKey(keyBytes: ByteArray) {
+        val hex = keyBytes.joinToString("") { "%02x".format(it) }
+        val prefs = Prefs(GBApplication.getDeviceSpecificSharedPrefs(device.address))
+        prefs.getPreferences().edit().putString(PREF_ADVERTISEMENT_KEY, hex).apply()
+        LOG.info("Stored advertisement key for {}", device.address)
+    }
+
     override fun onCharacteristicChanged(
         gatt: BluetoothGatt,
         characteristic: BluetoothGattCharacteristic,
         value: ByteArray
     ): Boolean {
+        // Check for 19ec65 key response on Smart service
+        if (characteristic.uuid == UUID_SMART_DATA || characteristic.uuid == UUID_SMART_SETUP) {
+            keyNotifs.add(value)
+            val key = reassembleAdkey(keyNotifs)
+            if (key != null) {
+                LOG.info("Retrieved 16-byte advertisement key via 19ec65")
+                setAdvertisementKey(key)
+                keyNotifs.clear()
+            }
+            return true
+        }
         if (handleCharacteristic(characteristic.uuid, value)) {
             return true
         }
@@ -145,10 +292,63 @@ class VictronVebusSupport : AbstractBTLESingleDeviceSupport(LOG) {
         if (status != BluetoothGatt.GATT_SUCCESS) {
             return super.onCharacteristicRead(gatt, characteristic, value, status)
         }
+        if (characteristic.uuid == UUID_SMART_DATA || characteristic.uuid == UUID_SMART_SETUP) {
+            keyNotifs.add(value)
+            val key = reassembleAdkey(keyNotifs)
+            if (key != null) {
+                LOG.info("Retrieved 16-byte advertisement key via 19ec65")
+                setAdvertisementKey(key)
+                keyNotifs.clear()
+            }
+            return true
+        }
         if (handleCharacteristic(characteristic.uuid, value)) {
             return true
         }
         return super.onCharacteristicRead(gatt, characteristic, value, status)
+    }
+
+    /**
+     * Reassemble the 19ec65 response from notification fragments.
+     * Looks for 19 ec 65 50 marker, extracts 16 bytes after 6-byte header.
+     */
+    private fun reassembleAdkey(notifications: List<ByteArray>): ByteArray? {
+        val marker = byteArrayOf(0x19, 0xEC.toByte(), 0x65, 0x50)
+        for (i in notifications.indices) {
+            val blob = notifications[i]
+            val idx = blob.indexOfSubarray(marker)
+            if (idx < 0) continue
+            val hdrStart = idx - 2
+            if (hdrStart < 0) continue
+            // Full 22-byte frame: 6-byte header + 16-byte key
+            if (blob.size >= hdrStart + 22) {
+                return blob.copyOfRange(hdrStart + 6, hdrStart + 22)
+            }
+            // Fragmented: accumulate continuations
+            val key = blob.copyOfRange(hdrStart + 6, blob.size).toMutableList()
+            for (j in i + 1 until notifications.size) {
+                val nxt = notifications[j]
+                if (nxt.isEmpty()) continue
+                // New frame starts: 08/09/f9/f7/07/02
+                if (nxt[0] in byteArrayOf(0x08, 0x09, 0xF9.toByte(), 0xF7.toByte(), 0x07, 0x02)) break
+                key.addAll(nxt.toList())
+                if (key.size >= 16) break
+            }
+            if (key.size >= 16) {
+                return key.take(16).toByteArray()
+            }
+        }
+        return null
+    }
+
+    private fun ByteArray.indexOfSubarray(sub: ByteArray): Int {
+        outer@ for (i in 0..size - sub.size) {
+            for (j in sub.indices) {
+                if (this[i + j] != sub[j]) continue@outer
+            }
+            return i
+        }
+        return -1
     }
 
     fun handleCharacteristic(characteristicUUID: UUID, value: ByteArray): Boolean {
@@ -280,6 +480,12 @@ class VictronVebusSupport : AbstractBTLESingleDeviceSupport(LOG) {
     }
 
     override fun dispose() {
+        try {
+            LocalBroadcastManager.getInstance(context).unregisterReceiver(advertisementReceiver)
+            LOG.debug("Unregistered advertisement receiver")
+        } catch (e: Exception) {
+            LOG.warn("Failed to unregister advertisement receiver", e)
+        }
         notificationReceiver?.let {
             try {
                 context.unregisterReceiver(it)
@@ -301,6 +507,26 @@ class VictronVebusSupport : AbstractBTLESingleDeviceSupport(LOG) {
         private val UUID_CHARACTERISTIC_CTRL = UUID.fromString("306b0002-b081-4037-83dc-e59fcc3cdfd0")
         private val UUID_CHARACTERISTIC_DATA = UUID.fromString("306b0003-b081-4037-83dc-e59fcc3cdfd0")
         private val UUID_CHARACTERISTIC_SETUP = UUID.fromString("306b0004-b081-4037-83dc-e59fcc3cdfd0")
+
+        // Smart service for 19ec65 advertisement key retrieval
+        private val UUID_SERVICE_SMART = UUID.fromString("306b0001-b081-4037-83dc-e59fcc3cdfd0")
+        private val UUID_SMART_CTRL = UUID.fromString("306b0002-b081-4037-83dc-e59fcc3cdfd0")
+        private val UUID_SMART_DATA = UUID.fromString("306b0003-b081-4037-83dc-e59fcc3cdfd0")
+        private val UUID_SMART_SETUP = UUID.fromString("306b0004-b081-4037-83dc-e59fcc3cdfd0")
+
+        // 19ec65 read commands (from victron-ble adkey.py)
+        private val SETUP_LAST = byteArrayOf(
+            0x06, 0x00, 0x82.toByte(), 0x18, 0x93.toByte(), 0x42,
+            0x10, 0x27, 0x05, 0x00, 0x82.toByte(), 0x19,
+            0xEC.toByte(), 0x66, 0x19, 0xEC.toByte(), 0x65,
+            0x03, 0x01, 0x03
+        )
+        // READ_EC65: explicit get for 19ec65
+        private val READ_EC65 = byteArrayOf(
+            0x05, 0x03, 0x81.toByte(), 0x19, 0xEC.toByte(), 0x65
+        )
+
+        private const val PREF_ADVERTISEMENT_KEY = "victron_advertisement_key"
 
         private const val MODE_PATH = "190200"
         private const val CURRENT_LIMIT_PATH = "190203"
