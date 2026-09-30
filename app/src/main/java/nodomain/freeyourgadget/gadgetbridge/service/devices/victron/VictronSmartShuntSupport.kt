@@ -136,6 +136,15 @@ class VictronSmartShuntSupport : AbstractBTLESingleDeviceSupport(LOG) {
         return builder
     }
 
+    override fun onCharacteristicWrite(
+        gatt: android.bluetooth.BluetoothGatt,
+        characteristic: android.bluetooth.BluetoothGattCharacteristic,
+        status: Int
+    ): Boolean {
+        LOG.debug("Write completed: {} status={}", characteristic.uuid, status)
+        return super.onCharacteristicWrite(gatt, characteristic, status)
+    }
+
     override fun onCharacteristicChanged(
         gatt: BluetoothGatt,
         characteristic: BluetoothGattCharacteristic,
