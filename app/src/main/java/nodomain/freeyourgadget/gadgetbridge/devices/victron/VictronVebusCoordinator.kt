@@ -43,20 +43,18 @@ class VictronVebusCoordinator : AbstractBLEDeviceCoordinator() {
         if (candidate.supportsService(UUID_SERVICE_VICTRON_VEBUS)) {
             return true
         }
-        // Match by name (case-insensitive) for VE.Bus dongles
+        // Match by name (case-insensitive) for VE.Bus dongles and MultiPlus
         val name = candidate.name?.lowercase() ?: ""
         if (name.contains("ve.bus") || name.contains("multiplus")) {
             return true
         }
-        // Rename-proof match: Victron advertisements always carry manufacturer
-        // ID 0x02E1. Match any Victron device here; the device type byte
-        // check is too strict for the Smart Dongle which may not advertise
-        // as type 0x03 (inverter).
+        // Match by manufacturer data: Victron company ID with device type
+        // 0x03 (inverter/VE.Bus) at offset 4. Do NOT match other Victron
+        // device types (e.g. solar chargers) here.
         val msd = candidate.manufacturerSpecificData
         val data = msd.get(VICTRON_COMPANY_ID) ?: return false
-        // Accept any Victron device with manufacturer data; user selects
-        // the correct device type during pairing if needed
-        return data.size > VICTRON_DEVICE_TYPE_OFFSET
+        return data.size > VICTRON_DEVICE_TYPE_OFFSET &&
+            data[VICTRON_DEVICE_TYPE_OFFSET] == VICTRON_TYPE_INVERTER
     }
 
     override fun getManufacturer(): String {

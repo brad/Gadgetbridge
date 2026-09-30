@@ -107,6 +107,8 @@ class VictronSmartShuntSupport : AbstractBTLESingleDeviceSupport(LOG) {
         // This enables passive Instant Readout telemetry from advertisements.
         if (getAdvertisementKey() == null) {
             LOG.info("No advertisement key stored, attempting GATT retrieval via 19ec65")
+            // Force write-with-response for CTRL
+            getCharacteristic(UUID_SMART_CTRL)?.setWriteType(android.bluetooth.BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
             builder.notify(UUID_SMART_CTRL, true)
             builder.notify(UUID_SMART_DATA, true)
             builder.notify(UUID_SMART_SETUP, true)
@@ -140,6 +142,10 @@ class VictronSmartShuntSupport : AbstractBTLESingleDeviceSupport(LOG) {
         value: ByteArray
     ): Boolean {
         // Check for 19ec65 key response on Smart service
+        // Also log CTRL notifications (f901 login response comes here)
+        if (characteristic.uuid == UUID_SMART_CTRL) {
+            LOG.debug("Smart-service CTRL notification: {} bytes: {}", value.size, value.joinToString("") { "%02x".format(it) })
+        }
         if (characteristic.uuid == UUID_SMART_DATA || characteristic.uuid == UUID_SMART_SETUP) {
             LOG.debug("Smart-service notification on {}: {} bytes", characteristic.uuid, value.size)
             keyNotifs.add(value)
