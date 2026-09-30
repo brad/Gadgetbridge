@@ -141,7 +141,7 @@ class VictronSmartShuntSupport : AbstractBTLESingleDeviceSupport(LOG) {
         characteristic: android.bluetooth.BluetoothGattCharacteristic,
         status: Int
     ): Boolean {
-        LOG.debug("Write completed: {} status={}", characteristic.uuid, status)
+        LOG.info("Write completed: {} status={}", characteristic.uuid, status)
         return super.onCharacteristicWrite(gatt, characteristic, status)
     }
 
@@ -153,7 +153,7 @@ class VictronSmartShuntSupport : AbstractBTLESingleDeviceSupport(LOG) {
         // Check for 19ec65 key response on Smart service
         // Also log CTRL notifications (f901 login response comes here)
         if (characteristic.uuid == UUID_SMART_CTRL) {
-            LOG.debug("Smart-service CTRL notification: {} bytes: {}", value.size, value.joinToString("") { "%02x".format(it) })
+            LOG.info("Smart-service CTRL notification: {} bytes: {}", value.size, value.joinToString("") { "%02x".format(it) })
         }
         if (characteristic.uuid == UUID_SMART_DATA || characteristic.uuid == UUID_SMART_SETUP) {
             LOG.debug("Smart-service notification on {}: {} bytes", characteristic.uuid, value.size)
