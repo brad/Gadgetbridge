@@ -110,16 +110,17 @@ public class BLEScanService extends Service {
             intent.putExtra(EXTRA_DEVICE_ADDRESS, device.getAddress());
             intent.putExtra(EXTRA_RSSI, result.getRssi());
 
-            Parcel parcel = Parcel.obtain();
-            try {
-                if (result.getScanRecord() != null) {
-                    parcel.writeSparseArray(result.getScanRecord().getManufacturerSpecificData());
-                    intent.putExtra(EXTRA_MANUFACTURER_SPECIFIC_DATA, parcel.readBundle(getClass().getClassLoader()));
+            if (result.getScanRecord() != null) {
+                android.util.SparseArray<byte[]> msd = result.getScanRecord().getManufacturerSpecificData();
+                if (msd != null) {
+                    android.os.Bundle bundle = new android.os.Bundle();
+                    for (int i = 0; i < msd.size(); i++) {
+                        bundle.putByteArray(String.valueOf(msd.keyAt(i)), msd.valueAt(i));
+                    }
+                    intent.putExtra(EXTRA_MANUFACTURER_SPECIFIC_DATA, bundle);
                 }
-                localBroadcastManager.sendBroadcast(intent);
-            } finally {
-                parcel.recycle();
             }
+            localBroadcastManager.sendBroadcast(intent);
 
             // device found, attempt connection
             // stop scanning for device for now
