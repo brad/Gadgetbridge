@@ -27,6 +27,8 @@ import org.slf4j.LoggerFactory
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
 class VictronSmartShuntSupport : AbstractBTLESingleDeviceSupport(LOG) {
@@ -35,6 +37,9 @@ class VictronSmartShuntSupport : AbstractBTLESingleDeviceSupport(LOG) {
 
     // Accumulated notifications for 19ec65 key reassembly (may span fragments)
     private val keyNotifs = mutableListOf<ByteArray>()
+    // Latch for completion-aware key wait (counts down when key is found)
+    // Reset before each retrieval attempt (CountDownLatch is single-use)
+    private var keyLatch = CountDownLatch(1)
 
     private val advertisementReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -105,31 +110,57 @@ class VictronSmartShuntSupport : AbstractBTLESingleDeviceSupport(LOG) {
 
         // If we don't have the advertisement key yet, retrieve it via 19ec65.
         // This enables passive Instant Readout telemetry from advertisements.
+        // Stability: no inter-write pacing sleeps (Python proved they're unnecessary).
+        // Completion-aware: wait up to 20s for key, return immediately when it arrives.
         if (getAdvertisementKey() == null) {
+            LOG.info("=== 19ec65 key retrieval starting ===")
+            // Reset latch for this attempt
+            keyLatch = CountDownLatch(1)
             LOG.info("No advertisement key stored, attempting GATT retrieval via 19ec65")
+            device.setBusyTask(R.string.getting_advertisement_key, context)
             // Force write-with-response for CTRL
             getCharacteristic(UUID_SMART_CTRL)?.setWriteType(android.bluetooth.BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+            LOG.debug("Enabling notifications on SMART_CTRL, SMART_DATA, SMART_SETUP")
             builder.notify(UUID_SMART_CTRL, true)
             builder.notify(UUID_SMART_DATA, true)
             builder.notify(UUID_SMART_SETUP, true)
-            // Smart-service login: fa80ff + f980 to CTRL (with delays per victron-ble adkey.py)
+            // Smart-service login: fa80ff + f980 to CTRL (no pacing delays)
+            LOG.info("Writing login fa80ff to CTRL")
             builder.write(UUID_SMART_CTRL, 0xFA.toByte(), 0x80.toByte(), 0xFF.toByte())
-            builder.sleep(300)
+            LOG.info("Writing ping f980 to CTRL")
             builder.write(UUID_SMART_CTRL, 0xF9.toByte(), 0x80.toByte())
-            builder.sleep(1000)
-            // Handshake: 01 and 0300 to DATA
+            // Handshake: 01 and 0300 to DATA (no pacing delays)
+            LOG.info("Writing 01 to DATA")
             builder.write(UUID_SMART_DATA, 0x01.toByte())
-            builder.sleep(500)
+            LOG.info("Writing 0300 to DATA")
             builder.write(UUID_SMART_DATA, 0x03.toByte(), 0x00.toByte())
-            builder.sleep(500)
-            // Request 19ec65: SETUP_LAST + READ_EC65
-            // SETUP_LAST = get(19ec66, 19ec65) - 20 bytes
+            // Request 19ec65: SETUP_LAST + READ_EC65 (no pacing delays)
+            LOG.info("Writing SETUP_LAST (get 19ec66->19ec65) to DATA")
             builder.write(UUID_SMART_DATA, *SETUP_LAST)
-            builder.sleep(1000)
-            // READ_EC65 = explicit get for 19ec65
+            LOG.info("Writing READ_EC65 (explicit get 19ec65) to DATA")
             builder.write(UUID_SMART_DATA, *READ_EC65)
-            builder.sleep(3000)
+            // Completion-aware wait: up to 20s, returns immediately when key arrives
+            // (onCharacteristicChanged counts down keyLatch when key is reassembled)
+            LOG.info("All writes queued, waiting up to 20s for 19ec65 key notifications...")
+            builder.run {
+                val gotKey = try {
+                    keyLatch.await(20, TimeUnit.SECONDS)
+                } catch (e: InterruptedException) {
+                    LOG.warn("Key wait interrupted", e)
+                    false
+                }
+                if (gotKey) {
+                    LOG.info("19ec65 key received within timeout, continuing initialization")
+                } else {
+                    LOG.warn("Timeout after 20s waiting for 19ec65 key - {} fragments received, {} bytes total",
+                        keyNotifs.size, keyNotifs.sumOf { it.size })
+                }
+            }
             keyNotifs.clear()
+            device.unsetBusyTask()
+            LOG.info("=== 19ec65 key retrieval finished ===")
+        } else {
+            LOG.debug("Advertisement key already stored, skipping 19ec65 retrieval")
         }
 
         builder.setDeviceState(GBDevice.State.INITIALIZED)
@@ -156,15 +187,29 @@ class VictronSmartShuntSupport : AbstractBTLESingleDeviceSupport(LOG) {
             LOG.info("Smart-service CTRL notification: {} bytes: {}", value.size, value.joinToString("") { "%02x".format(it) })
         }
         if (characteristic.uuid == UUID_SMART_DATA || characteristic.uuid == UUID_SMART_SETUP) {
-            LOG.debug("Smart-service notification on {}: {} bytes", characteristic.uuid, value.size)
+            val hexPreview = value.take(20).joinToString("") { "%02x".format(it) }
+            LOG.info("19ec65 fragment #{} on {}: {} bytes: {}{}",
+                keyNotifs.size + 1, characteristic.uuid, value.size, hexPreview,
+                if (value.size > 20) "..." else "")
             keyNotifs.add(value)
+            val totalBytes = keyNotifs.sumOf { it.size }
+            LOG.debug("Reassembly: {} fragments, {} total bytes", keyNotifs.size, totalBytes)
             val key = reassembleAdkey(keyNotifs)
             if (key != null) {
-                LOG.info("Retrieved 16-byte advertisement key via 19ec65")
+                LOG.info("=== 19ec65 key reassembled successfully: {} fragments, {} bytes ===",
+                    keyNotifs.size, totalBytes)
+                LOG.info("Retrieved 16-byte advertisement key via 19ec65 (key material not logged)")
                 setAdvertisementKey(key)
                 keyNotifs.clear()
+                device.unsetBusyTask()
+                // Signal the waiting transaction that the key has arrived
+                // (completion-aware: no need to wait the full 20s timeout)
+                keyLatch.countDown()
+                LOG.debug("Key latch counted down, waiting transaction will continue")
                 // Disable Smart notifies now that we have the key
                 // (keep the 6597 telemetry notifies active)
+            } else {
+                LOG.debug("Key not yet complete after {} fragments", keyNotifs.size)
             }
             return true
         }
