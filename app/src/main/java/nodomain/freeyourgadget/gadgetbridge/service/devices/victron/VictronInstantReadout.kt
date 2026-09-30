@@ -130,6 +130,59 @@ object VictronInstantReadout {
     }
 
     /**
+     * Parse decrypted VE.Bus (MultiPlus dongle) payload.
+     *
+     * Bit layout (LSB-first, from victron_ble/devices/vebus.py):
+     *   device_state: 8 bits unsigned (0xFF = N/A)
+     *   error: 8 bits unsigned (0xFF = N/A)
+     *   battery_current: 16 bits signed, /10 A (0x7FFF = N/A)
+     *   battery_voltage: 14 bits unsigned, /100 V (0x3FFF = N/A)
+     *   ac_in_state: 2 bits unsigned (3 = N/A)
+     *   ac_in_power: 19 bits signed, W (0x3FFFF = N/A)
+     *   ac_out_power: 19 bits signed, W (0x3FFFF = N/A)
+     *   alarm: 2 bits unsigned (3 = N/A)
+     *   battery_temperature: 7 bits unsigned, -40 C (0x7F = N/A)
+     *   soc: 7 bits unsigned, % (0x7F = N/A)
+     */
+    fun parseVebus(decrypted: ByteArray): VebusReadout? {
+        if (decrypted.size < 13) {
+            LOG.debug("Decrypted data too short for VE.Bus: {}", decrypted.size)
+            return null
+        }
+
+        return try {
+            val reader = BitReader(decrypted)
+
+            val deviceState = reader.readUnsignedInt(8)
+            val error = reader.readUnsignedInt(8)
+            val batteryCurrentRaw = reader.readSignedInt(16)
+            val batteryVoltageRaw = reader.readUnsignedInt(14)
+            val acInState = reader.readUnsignedInt(2)
+            val acInPowerRaw = reader.readSignedInt(19)
+            val acOutPowerRaw = reader.readSignedInt(19)
+            val alarm = reader.readUnsignedInt(2)
+            val batteryTempRaw = reader.readUnsignedInt(7)
+            val socRaw = reader.readUnsignedInt(7)
+
+            VebusReadout(
+                deviceState = if (deviceState != 0xFF) deviceState else null,
+                error = if (error != 0xFF) error else null,
+                batteryCurrent = if (batteryCurrentRaw != 0x7FFF) batteryCurrentRaw / 10.0 else null,
+                batteryVoltage = if (batteryVoltageRaw != 0x3FFF) batteryVoltageRaw / 100.0 else null,
+                acInState = if (acInState != 3) acInState else null,
+                acInPower = if (acInPowerRaw != 0x3FFFF) acInPowerRaw.toDouble() else null,
+                acOutPower = if (acOutPowerRaw != 0x3FFFF) acOutPowerRaw.toDouble() else null,
+                alarm = if (alarm != 3) alarm else null,
+                batteryTemperature = if (batteryTempRaw != 0x7F) batteryTempRaw - 40 else null,
+                soc = if (socRaw != 0x7F) socRaw.toDouble() else null
+            )
+        } catch (e: Exception) {
+            LOG.warn("Failed to parse VE.Bus payload", e)
+            null
+        }
+    }
+
+    /**
      * Bit reader for Victron's LSB-first packed structures.
      */
     private class BitReader(private val data: ByteArray) {
@@ -172,4 +225,20 @@ data class SmartShuntReadout(
     val consumedAh: Double?,
     val soc: Double?,
     val auxValue: Int
+)
+
+/**
+ * Parsed VE.Bus (MultiPlus dongle) Instant Readout telemetry.
+ */
+data class VebusReadout(
+    val deviceState: Int?,
+    val error: Int?,
+    val batteryCurrent: Double?,
+    val batteryVoltage: Double?,
+    val acInState: Int?,
+    val acInPower: Double?,
+    val acOutPower: Double?,
+    val alarm: Int?,
+    val batteryTemperature: Int?,
+    val soc: Double?
 )
