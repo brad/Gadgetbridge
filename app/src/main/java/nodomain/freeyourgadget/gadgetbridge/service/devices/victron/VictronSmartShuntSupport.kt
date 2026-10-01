@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import nodomain.freeyourgadget.gadgetbridge.GBApplication
+import nodomain.freeyourgadget.gadgetbridge.R
 import nodomain.freeyourgadget.gadgetbridge.activities.workouts.WorkoutValueFormatter
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventBatteryInfo
 import nodomain.freeyourgadget.gadgetbridge.devices.BatteryCurrentSampleProvider
@@ -142,7 +143,7 @@ class VictronSmartShuntSupport : AbstractBTLESingleDeviceSupport(LOG) {
             // Completion-aware wait: up to 20s, returns immediately when key arrives
             // (onCharacteristicChanged counts down keyLatch when key is reassembled)
             LOG.info("All writes queued, waiting up to 20s for 19ec65 key notifications...")
-            builder.run {
+            builder.run(Runnable {
                 val gotKey = try {
                     keyLatch.await(20, TimeUnit.SECONDS)
                 } catch (e: InterruptedException) {
@@ -155,7 +156,7 @@ class VictronSmartShuntSupport : AbstractBTLESingleDeviceSupport(LOG) {
                     LOG.warn("Timeout after 20s waiting for 19ec65 key - {} fragments received, {} bytes total",
                         keyNotifs.size, keyNotifs.sumOf { it.size })
                 }
-            }
+            })
             keyNotifs.clear()
             device.unsetBusyTask()
             LOG.info("=== 19ec65 key retrieval finished ===")
